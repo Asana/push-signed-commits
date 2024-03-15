@@ -136,7 +136,9 @@ def get_file_changes_from_local_commit_hash(commit_hash: str) -> FileChanges:
             file_changes["deletions"].append(FileDeletion(path=filenames[0]))
 
     # go back to the previous ref
-    subprocess.run(["git", "checkout", "-"], check=True, stdout=subprocess.PIPE, text=True)
+    subprocess.run(
+        ["git", "checkout", "-"], check=True, stdout=subprocess.PIPE, text=True
+    )
 
     return file_changes
 
@@ -155,23 +157,21 @@ def get_local_commits_not_on_remote(
     Returns:
         list: A list of strings representing the commit hashes.
     """
-    result = subprocess.run(
+    result: list[str] = subprocess.run(
         ["git", "rev-list", f"{remote_name}/{remote_branch_name}..{local_branch_name}"],
         stdout=subprocess.PIPE,
         text=True,
         check=True,
-    )
+    ).stdout.splitlines()
     logging.info(
         "Found %s commits on the local branch that are not on the remote branch.",
-        len(result.stdout.splitlines()),
+        len(result),
     )
     logging.debug("Commits to be created on the remote branch:")
-
-    for commit_hash in result.stdout.splitlines():
-        logging.debug(commit_hash)
+    logging.debug("\n".join(result))
 
     # reverse the list so that the oldest commit is first
-    return result.stdout.splitlines()[::-1]
+    return result[::-1]
 
 
 def create_commit_on_remote_branch(
