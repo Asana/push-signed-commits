@@ -48,6 +48,8 @@ runs:
       run: |
         python ${{ github.action_path }}/create_commits.py ${{ inputs.github-token }} ${{ inputs.repo }} ${{ inputs.local_branch_name }} ${{ inputs.remote_branch_name }}
       shell: bash
+    # The createCommitOnBranch endpoint will dynamically generate authorship and commit verification information, which will result in different commit hashes on the remote vs. local branch. 
+    # This step will reset the local branch to have the same authorship info, verification status, and therefore commit hash (which is deterministically derived from commit contents) as the remote. 
     - name: Reset the local branch to the remote branch
       if: success()
       run: |
