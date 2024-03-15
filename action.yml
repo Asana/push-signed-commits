@@ -46,7 +46,7 @@ runs:
       shell: bash
     - name: Run script
       run: |
-        python create_commits.py ${{ inputs.github-token }} ${{ inputs.repo }} ${{ inputs.local_branch_name }} ${{ inputs.remote_branch_name }}
+        python ${{ github.action_path }}/create_commits.py ${{ inputs.github-token }} ${{ inputs.repo }} ${{ inputs.local_branch_name }} ${{ inputs.remote_branch_name }}
       shell: bash
     - name: Reset the local branch to the remote branch
       if: success()
