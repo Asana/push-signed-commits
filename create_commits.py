@@ -73,8 +73,8 @@ def get_file_changes_from_local_commit_hash(commit_hash: str) -> FileChanges:
     # setting config variable advice.detachedHead to false to avoid verbose messages in the logs
     subprocess.run(
         ["git", "config", "advice.detachedHead", "false"],
-        capture_output=True,
         stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
         check=True,
     )
 
