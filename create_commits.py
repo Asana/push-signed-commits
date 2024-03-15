@@ -133,7 +133,7 @@ def get_file_changes_from_local_commit_hash(commit_hash: str) -> FileChanges:
 
         elif status in ["D"]:
             logging.debug("Deleted file detected")
-            file_changes["deletions"].append({"path": filenames[0]})
+            file_changes["deletions"].append(FileDeletion(path=filenames[0]))
 
     # go back to the previous ref
     subprocess.run(["git", "checkout", "-"], check=True, stdout=subprocess.PIPE, text=True)
