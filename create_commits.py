@@ -74,7 +74,7 @@ def get_file_changes_from_local_commit_hash(commit_hash: str) -> FileChanges:
     subprocess.run(
         ["git", "config", "advice.detachedHead", "false"],
         capture_output=True,
-        text=True,
+        stdout=subprocess.DEVNULL,
         check=True,
     )
 
