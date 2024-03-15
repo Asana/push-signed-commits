@@ -1,11 +1,13 @@
 # pyright: strict
 import base64
+from multiprocessing import Value
 import subprocess
 import sys
-from typing import Optional, TypedDict
+from typing import Literal, Optional, TypedDict
 import logging
 
 import requests
+import argparse
 
 
 class FileDeletion(TypedDict):
@@ -140,7 +142,7 @@ def get_file_changes_from_local_commit_hash(commit_hash: str) -> FileChanges:
 
 
 def get_local_commits_not_on_remote(
-    local_branch_name: str, remote_branch_name: str
+    local_branch_name: str, remote_name: str, remote_branch_name: str
 ) -> list[str]:
     """
     Get a list of commit hashes on the local branch that are not on the remote branch,
@@ -154,7 +156,7 @@ def get_local_commits_not_on_remote(
         list: A list of strings representing the commit hashes.
     """
     result = subprocess.run(
-        ["git", "rev-list", f"origin/{remote_branch_name}..{local_branch_name}"],
+        ["git", "rev-list", f"{remote_name}/{remote_branch_name}..{local_branch_name}"],
         capture_output=True,
         text=True,
         check=True,
@@ -195,15 +197,6 @@ def create_commit_on_remote_branch(
     Returns:
         str: The commit oid of the created commit.
     """
-
-    assert not remote_branch_name.startswith(
-        "origin/"
-    ), "Do not include 'origin/' in the remote branch name."
-
-    assert not remote_branch_name.startswith(
-        "refs/heads/"
-    ), "Do not include 'refs/heads/' in the remote branch name."
-
     url = "https://api.github.com/graphql"
     headers = {"Authorization": f"Bearer {github_token}"}
 
@@ -242,6 +235,7 @@ def main(
     github_token: str,
     repository_name_with_owner: str,
     local_branch_name: str,
+    remote_name: str,
     remote_branch_name: str,
 ) -> None:
     """
@@ -258,16 +252,10 @@ def main(
         local_branch_name (str): The name of the local branch.
         remote_branch_name (str): The name of the remote branch.
     """
-    assert not remote_branch_name.startswith(
-        "origin/"
-    ), "Do not include 'origin/' in the remote branch name."
-    assert not remote_branch_name.startswith(
-        "refs/heads/"
-    ), "Do not include 'refs/heads/' in the remote branch name."
 
     # List of hashes for commit on the local branch that are not on the remote branch
     new_commit_local_hashes: list[str] = get_local_commits_not_on_remote(
-        local_branch_name, remote_branch_name
+        local_branch_name, remote_name, remote_branch_name
     )
 
     # Track the OID for the most recent commit created. This will be used as the parent commit OID for the next commit.
@@ -289,13 +277,13 @@ def main(
 
         # Get the commit OID of the latest commit on the remote branch
         subprocess.run(
-            ["git", "fetch", "origin", remote_branch_name],
+            ["git", "fetch", remote_name, remote_branch_name],
             capture_output=True,
             text=True,
             check=True,
         )
         remote_head_oid = subprocess.run(
-            ["git", "rev-parse", f"origin/{remote_branch_name}"],
+            ["git", "rev-parse", f"{remote_name}/{remote_branch_name}"],
             capture_output=True,
             text=True,
             check=True,
@@ -317,31 +305,62 @@ def main(
         )
 
         logging.info(
-            "Created commit %s from commit sha %s on branch origin/%s with message: %s",
+            "Created commit %s from commit sha %s on branch %s/%s with message: %s",
             last_remote_commit_created_oid,
             local_commit_hash,
+            remote_name,
             remote_branch_name,
             commit_message,
         )
 
     logging.info(
-        "Finished creating %s commits on the remote branch origin/%s from the local branch %s.",
+        "Finished creating %s commits on the remote branch %s/%s from the local branch %s.",
         len(new_commit_local_hashes),
+        remote_name,
         remote_branch_name,
         local_branch_name,
     )
 
 
-if __name__ == "__main__":
-    if len(sys.argv) != 5:
-        print(
-            "Usage: python script.py <github_token> <repository_name_with_owner> <local_branch_name> <remote_branch_name>"
+def validate_branch_name(
+    branch_name: str,
+    branch_type: Literal["remote", "local"],
+    remote_name: str = "origin",
+) -> None:
+
+    if branch_name.startswith("origin/"):
+        raise ValueError(f"Do not include 'origin/' in the {branch_type} branch name.")
+    if branch_name.startswith("refs/heads/"):
+        raise ValueError(
+            f"Do not include 'refs/heads/' in the {branch_type} branch name."
         )
-        sys.exit(1)
+    if branch_name.startswith(remote_name + "/"):
+        raise ValueError(
+            f"Do not include the remote name in the {branch_type} branch name."
+        )
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("github_token", help="GitHub personal access token", type=str)
+    parser.add_argument(
+        "repository_name_with_owner", help="Repository name with owner", type=str
+    )
+    parser.add_argument("local_branch_name", help="Local branch name", type=str)
+    parser.add_argument("remote_name", help="Remote name")
+    parser.add_argument("remote_branch_name", help="Remote branch name")
+    args = parser.parse_args()
+
+    # Validate branch names
+    validate_branch_name(args.local_branch_name, "local", remote_name=args.remote_name)
+    validate_branch_name(
+        args.remote_branch_name, "remote", remote_name=args.remote_name
+    )
 
     main(
-        github_token=sys.argv[1],
-        repository_name_with_owner=sys.argv[2],
-        local_branch_name=sys.argv[3],
-        remote_branch_name=sys.argv[4],
+        github_token=args.github_token,
+        repository_name_with_owner=args.repository_name_with_owner,
+        local_branch_name=args.local_branch_name,
+        remote_name=args.remote_name,
+        remote_branch_name=args.remote_branch_name,
     )

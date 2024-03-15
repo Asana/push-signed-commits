@@ -29,6 +29,9 @@ inputs:
   remote_branch_name:
     description: 'Remote branch name - should not include refs/heads/ prefix or origin/ prefix'
     required: true
+  remote_name: 
+    description: 'The name of the remote to push to, pre-configured in the local git repo. eg., `origin`'
+    default: 'origin'
 runs:
   using: 'composite'
   steps:
@@ -46,13 +49,13 @@ runs:
       shell: bash
     - name: Run script
       run: |
-        python ${{ github.action_path }}/create_commits.py ${{ inputs.github-token }} ${{ inputs.repo }} ${{ inputs.local_branch_name }} ${{ inputs.remote_branch_name }}
+        python ${{ github.action_path }}/create_commits.py ${{ inputs.github-token }} ${{ inputs.repo }} ${{ inputs.local_branch_name }} ${{ inputs.remote_name }} ${{ inputs.remote_branch_name }}
       shell: bash
     # The createCommitOnBranch endpoint will dynamically generate authorship and commit verification information, which will result in different commit hashes on the remote vs. local branch. 
     # If the creation of remote commits is successful, a final step runs. This step will reset the local branch to have the same authorship info, verification status, and therefore commit hash (which is deterministically derived from commit contents) as the remote. 
     - name: Reset the local branch to the remote branch
       if: success()
       run: |
-        git fetch origin
-        git reset --hard origin/${{ inputs.remote_branch_name }}
+        git fetch ${{ inputs.remote_name }} ${{ inputs.remote_branch_name }}
+        git reset --hard ${{ inputs.remote_name }}/${{ inputs.remote_branch_name }}
       shell: bash
