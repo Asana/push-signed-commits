@@ -1,0 +1,56 @@
+name: Diff a local and remote branch, and use createCommitOnBranch to push copies of local commits to the remote
+
+description: |
+  This composite Github Action was designed to allow Github Apps to push 'Verified' commits to Github. 
+  
+  Per https://github.com/orgs/community/discussions/50055, historically the only way to create 'signed' commits as a Github App installation was to use the Git database APIs (described at https://docs.github.com/en/rest/guides/using-the-rest-api-to-interact-with-your-git-database?apiVersion=2022-11-28), which are fairly complicated.
+  
+  In 2021, Github released the createCommitOnBranch GraphQL mutation, which makes it easier to add, update, and delete files in a branch of a repository. This new API offers a simpler way to commit changes compared to the existing Git database REST APIs. With the new createCommitOnBranch mutation, you do not need to manually create blobs and trees before creating the commit. This allows you to add, update, or delete multiple files in a single API call.
+  
+  The create-signed-remote-commits composite action uses the new createCommitOnBranch GraphQL endpoint to create verified commits on a remote branch. This GraphQL API extracts authorship information from the credential used for authentication, and automatically marks commits created using Github App installation credentials as "verified". 
+  
+  Read more about this new mutation and its conveniences here: https://github.blog/changelog/2021-09-13-a-simpler-api-for-authoring-commits/
+
+inputs:
+  github-token:
+    description: 'GitHub token'
+    required: true
+  owner:
+    description: 'Repository owner'
+    required: true
+    default: ${{ github.repository_owner }}
+  repo:
+    description: 'Repository name'
+    required: true
+    default: ${{ github.repository }}
+  local_branch_name:
+    description: 'Local branch name'
+    required: true
+  remote_branch_name:
+    description: 'Remote branch name - should not include refs/heads/ prefix or origin/ prefix'
+    required: true
+runs:
+  using: 'composite'
+  steps:
+    - name: Mask token
+      run: echo "::add-mask::${{ inputs.github-token }}"
+      shell: bash
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.9'
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install requests
+      shell: bash
+    - name: Run script
+      run: |
+        python create_commits.py ${{ inputs.github-token }} ${{ inputs.repo }} ${{ inputs.local_branch_name }} ${{ inputs.remote_branch_name }}
+      shell: bash
+    - name: Reset the local branch to the remote branch
+      if: success()
+      run: |
+        git fetch origin
+        git reset --hard origin/${{ inputs.remote_branch_name }}
+      shell: bash
