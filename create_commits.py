@@ -157,7 +157,7 @@ def get_local_commits_not_on_remote(
     """
     result = subprocess.run(
         ["git", "rev-list", f"{remote_name}/{remote_branch_name}..{local_branch_name}"],
-        capture_output=True,
+        stdout=subprocess.PIPE,
         text=True,
         check=True,
     )
