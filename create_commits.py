@@ -136,7 +136,7 @@ def get_file_changes_from_local_commit_hash(commit_hash: str) -> FileChanges:
             file_changes["deletions"].append({"path": filenames[0]})
 
     # go back to the previous ref
-    subprocess.run(["git", "checkout", "-"], check=True, capture_output=True, text=True)
+    subprocess.run(["git", "checkout", "-"], check=True, stdout=subprocess.PIPE, text=True)
 
     return file_changes
 
