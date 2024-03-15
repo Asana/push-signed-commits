@@ -131,7 +131,7 @@ def get_file_changes_from_local_commit_hash(commit_hash: str) -> FileChanges:
                 )
             )
 
-        elif status in ["D"]:
+        elif status == "D":
             logging.debug("Deleted file detected")
             file_changes["deletions"].append(FileDeletion(path=filenames[0]))
 
