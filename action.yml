@@ -49,13 +49,22 @@ runs:
       shell: bash
     - name: Run script
       run: |
-        python ${{ github.action_path }}/create_commits.py ${{ inputs.github-token }} ${{ inputs.repo }} ${{ inputs.local_branch_name }} ${{ inputs.remote_name }} ${{ inputs.remote_branch_name }}
+        python ${{ github.action_path }}/create_commits.py "$GITHUB_TOKEN" "$REPO" "$LOCAL_BRANCH_NAME" "$REMOTE_NAME" "$REMOTE_BRANCH_NAME"
       shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        REPO: ${{ inputs.repo }}
+        LOCAL_BRANCH_NAME: ${{ inputs.local_branch_name }}
+        REMOTE_BRANCH_NAME: ${{ inputs.remote_branch_name }}
+        REMOTE_NAME: ${{ inputs.remote_name }}
     # The createCommitOnBranch endpoint will dynamically generate authorship and commit verification information, which will result in different commit hashes on the remote vs. local branch. 
     # If the creation of remote commits is successful, a final step runs. This step will reset the local branch to have the same authorship info, verification status, and therefore commit hash (which is deterministically derived from commit contents) as the remote. 
     - name: Reset the local branch to the remote branch
       if: success()
       run: |
-        git fetch ${{ inputs.remote_name }} ${{ inputs.remote_branch_name }}
-        git reset --hard ${{ inputs.remote_name }}/${{ inputs.remote_branch_name }}
+        git fetch "$REMOTE_NAME" "$REMOTE_BRANCH_NAME
+        git reset --hard "$REMOTE_NAME"/"$REMOTE_BRANCH_NAME"
       shell: bash
+      env:
+        REMOTE_NAME: ${{ inputs.remote_name }}
+        REMOTE_BRANCH_NAME: ${{ inputs.remote_branch_name }}
