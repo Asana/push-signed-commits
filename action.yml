@@ -3,7 +3,7 @@ name: Diff a local and remote branch, and use createCommitOnBranch to push copie
 description: |
   This composite Github Action was designed to allow Github Apps to push 'Verified' commits to Github. 
   
-  Per https://github.com/orgs/community/discussions/50055, historically the only way to create 'signed' commits as a Github App installation was to use the Git database APIs (described at https://docs.github.com/en/rest/guides/using-the-rest-api-to-interact-with-your-git-database?apiVersion=2022-11-28), which are fairly complicated.
+  Per https://github.com/orgs/community/discussions/50055, historically the only way to create 'signed' commits as a Github App installation was to use the Git database APIs (described at https://docs.github.com/en/rest/guides/using-the-rest-api-to-interact-with-your-git-database?apiVersion=2022-11-28). These APIs are complicated, and it's a challenging multi-step process to implement commit verification with them. 
   
   In 2021, Github released the createCommitOnBranch GraphQL mutation, which makes it easier to add, update, and delete files in a branch of a repository. This new API offers a simpler way to commit changes compared to the existing Git database REST APIs. With the new createCommitOnBranch mutation, you do not need to manually create blobs and trees before creating the commit. This allows you to add, update, or delete multiple files in a single API call.
   
