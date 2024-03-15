@@ -90,10 +90,10 @@ def get_file_changes_from_local_commit_hash(commit_hash: str) -> FileChanges:
     files_changed_by_commit = result.stdout.splitlines()
 
     logging.debug("files_changed_by_commit:\n %s", files_changed_by_commit)
-    file_changes: FileChanges = {
-        "additions": [],
-        "deletions": [],
-    }
+    file_changes = FileChanges(
+        additions=[],
+        deletions=[],
+    )
 
     # check out that commit in detached head state, so that we can pull file contents accurately
     subprocess.run(["git", "checkout", commit_hash], check=True)
