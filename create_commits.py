@@ -83,7 +83,7 @@ def get_file_changes_from_local_commit_hash(commit_hash: str) -> FileChanges:
     # Get a list of files changed in a specific commit.
     result = subprocess.run(
         ["git", "diff", "--name-status", f"{commit_hash}~1", commit_hash],
-        capture_output=True,
+        stdout=subprocess.PIPE,
         text=True,
         check=True,
     )
