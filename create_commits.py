@@ -1,13 +1,24 @@
 # pyright: strict
 import base64
-from multiprocessing import Value
 import subprocess
-import sys
 from typing import Literal, Optional, TypedDict
 import logging
 
 import requests
 import argparse
+
+
+class GithubAPIError(Exception):
+    """
+    An exception raised when the GitHub API returns an error.
+    """
+
+
+class RemoteBranchDivergedError(Exception):
+    """
+    An exception raised when the remote branch has diverged from the local branch - i.e., the remote
+    branch has commits that the local branch does not have.
+    """
 
 
 class FileDeletion(TypedDict):
@@ -190,7 +201,8 @@ def create_commit_on_remote_branch(
         github_token (str): The GitHub personal access github_token.
         repository_name_with_owner (str): The name of the repository with the owner.
         remote_branch_name (str): The name of the branch.
-        expected_head_oid (str): The expected git commit oid at the head of the branch prior to the commit.
+        expected_head_oid (str): The expected git commit oid at the head of the branch prior to the
+        commit.
         file_changes (dict): The file changes object.
         message (str): The commit message.
 
@@ -225,7 +237,10 @@ def create_commit_on_remote_branch(
 
     if "errors" in response.json():
         logging.error(response.json())
-        exit(1)
+        raise GithubAPIError(
+            f"Error creating commit on branch {repository_name_with_owner}/{remote_branch_name}.\n"
+            f"Error message: {response.json()['errors']}",
+        )
 
     return response.json()["data"]["createCommitOnBranch"]["commit"]["oid"]
 
@@ -239,7 +254,8 @@ def main(
     remote_branch_name: str,
 ) -> None:
     """
-    Create commits on a remote branch for each commit on the local branch that's not on the remote branch.
+    Create commits on a remote branch for each commit on the local branch that's not on the remote
+    branch.
 
     Note: This function assumes that the commits created on the remote branch are unlikely to have
     the same commit ID as the local commits. This is intentional - the createCommitOnBranch mutation
@@ -258,7 +274,8 @@ def main(
         local_branch_name, remote_name, remote_branch_name
     )
 
-    # Track the OID for the most recent commit created. This will be used as the parent commit OID for the next commit.
+    # Track the OID for the most recent commit created. This will be used as the parent commit OID
+    # for the next commit.
     last_remote_commit_created_oid: Optional[str] = None
 
     for local_commit_hash in new_commit_local_hashes:
@@ -291,7 +308,11 @@ def main(
         assert (
             remote_head_oid == last_remote_commit_created_oid
             or not last_remote_commit_created_oid
-        ), "The latest commit on the remote branch is not the last commit created by this script. This is either because something went wrong during commit creation, or because someone else is pushing to the remote branch as well. Aborting."
+        ), (
+            "The latest commit on the remote branch is not the last commit created by this "
+            "script. This is either because something went wrong during commit creation, or "
+            "because someone else is pushing to the remote branch as well. Aborting."
+        )
 
         # Create a commit on the remote branch, and store the OID of the created commit in
         # last_remote_commit_created_oid
@@ -327,6 +348,10 @@ def validate_branch_name(
     branch_type: Literal["remote", "local"],
     remote_name: str = "origin",
 ) -> None:
+    """
+    Validate that the branch name is provided without refs/heads/, and without the remote name. If
+    the branch name is invalid, raise a ValueError.
+    """
 
     if branch_name.startswith("origin/"):
         raise ValueError(f"Do not include 'origin/' in the {branch_type} branch name.")
