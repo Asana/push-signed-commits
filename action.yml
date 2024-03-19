@@ -62,7 +62,7 @@ runs:
     - name: Reset the local branch to the remote branch
       if: success()
       run: |
-        git fetch "$REMOTE_NAME" "$REMOTE_BRANCH_NAME
+        git fetch "$REMOTE_NAME" "$REMOTE_BRANCH_NAME"
         git reset --hard "$REMOTE_NAME"/"$REMOTE_BRANCH_NAME"
       shell: bash
       env:
