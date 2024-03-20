@@ -8,6 +8,21 @@ import requests
 import argparse
 
 
+# exception for when we only manage to push some of the commits to the remote, but fail partway
+# through and so don't push all the commits. this is the most serious type of error -- it could
+# require operator intervention to resolve and may lead to unexpected results downstream.
+class PartialPushFailure(Exception):
+    """
+    An exception raised when we see a new commit on the remote branch while we're partway through
+    pushing new commits to the remote branch. This is unexpected, and it's possible that someone
+    else is pushing to the remote branch at the same time as us.
+
+    Important: when this error is raised, the remote branch will be in an unexpected state where
+    only some of the commits from the local branch have been pushed to the remote branch. This might
+    require manual operator reconciliation.
+    """
+
+
 class GithubAPIError(Exception):
     """
     An exception raised when the GitHub API returns an error.
@@ -234,16 +249,24 @@ def create_commit_on_remote_branch(
     }
 
     data = {"query": mutation, "variables": {"input": graphql_input}}
-    response = requests.post(url, headers=headers, json=data)
+    response = requests.post(url, headers=headers, json=data).json()
 
-    if "errors" in response.json():
-        logging.error(response.json())
-        raise GithubAPIError(
-            f"Error creating commit on branch {repository_name_with_owner}/{remote_branch_name}.\n"
-            f"Error message: {response.json()['errors']}",
-        )
+    # If there are errors in the response, log the errors and raise an exception
+    if "errors" in response:
+        logging.error(response)
+        if response["errors"][0]["type"] == "STALE_DATA":
+            raise PartialPushFailure(
+                "The expected head OID for the remote branch is stale. This is likely because "
+                "someone else has pushed to the remote branch since we last fetched it. Aborting."
+            )
+        else:
+            raise GithubAPIError(
+                f"Error creating commit on branch {repository_name_with_owner}/"
+                f"{remote_branch_name}.\n"
+                f"Error message: {response['errors']}",
+            )
 
-    return response.json()["data"]["createCommitOnBranch"]["commit"]["oid"]
+    return response["data"]["createCommitOnBranch"]["commit"]["oid"]
 
 
 def fetch_remote_branch_and_get_head_oid(
@@ -295,24 +318,24 @@ def main(
     """
 
     ################################################################################################
-    ####### Verification steps - these are checks to ensure that the script can run safely. ########
+    ####### Verification steps - ensure that the script can run safely.                     ########
     ################################################################################################
 
     # Get the 'expected parent' commit sha of the new commits that we want to push. we do this using
     # git merge-base local_branch_name remote_name/remote_branch_name
-    expected_parent_commit_oid: str = subprocess.run(
+    merge_base_commit_oid: str = subprocess.run(
         ["git", "merge-base", local_branch_name, f"{remote_name}/{remote_branch_name}"],
         capture_output=True,
         text=True,
         check=True,
     ).stdout.strip()
 
-    # Verify that the remote branch has not diverged from the local branch. If it has, raise an
-    # exception.
-    latest_remote_head_oid = fetch_remote_branch_and_get_head_oid(
-        remote_name, remote_branch_name
-    )
-    if latest_remote_head_oid != expected_parent_commit_oid:
+    # Verify that the remote branch has not diverged from the local branch. If it has, bail
+    # immediately.
+    if (
+        fetch_remote_branch_and_get_head_oid(remote_name, remote_branch_name)
+        != merge_base_commit_oid
+    ):
         raise RemoteBranchDivergedError(
             f"The remote branch {remote_name}/{remote_branch_name} has diverged from the local "
             f"branch {local_branch_name}. Aborting."
@@ -354,36 +377,40 @@ def main(
 
     # Track the OID for the most recent commit created. This will be used as the parent commit OID
     # for the next commit.
-    last_remote_commit_created_oid: Optional[str] = None
+    last_commit_pushed: Optional[str] = None
+    remote_commit_hashes_created: list[str] = []
 
     for local_commit_hash, commit_message, file_changes in new_commits_to_create:
 
-        latest_remote_head_oid = fetch_remote_branch_and_get_head_oid(
-            remote_name, remote_branch_name
-        )
-        assert (
-            latest_remote_head_oid == last_remote_commit_created_oid
-            or not last_remote_commit_created_oid
-        ), (
-            "The latest commit on the remote branch is not the last commit created by this "
-            "script. This is either because something went wrong during commit creation, or "
-            "because someone else is pushing to the remote branch as well. Aborting."
-        )
+        # Verify that the latest commit on the remote branch is the expected parent of the commit
+        # that we're about to create
+        if last_commit_pushed and (
+            fetch_remote_branch_and_get_head_oid(remote_name, remote_branch_name)
+            != last_commit_pushed
+        ):
+            raise PartialPushFailure(
+                "The latest commit on the remote branch is not the last commit created by this "
+                "script. This is either because something went wrong during commit creation, or "
+                "because someone else is pushing to the remote branch as well. Aborting."
+                f"We pushed {len(remote_commit_hashes_created)} commits to the remote branch, "
+                f"with hashes, {remote_commit_hashes_created}. The local commits that we didn't "
+                f"push were {new_commit_local_hashes[len(remote_commit_hashes_created):]}."
+            )
 
         # Create a commit on the remote branch, and store the OID of the created commit in
-        # last_remote_commit_created_oid
-        last_remote_commit_created_oid = create_commit_on_remote_branch(
+        # last_commit_pushed
+        last_commit_pushed = create_commit_on_remote_branch(
             github_token=github_token,
             repository_name_with_owner=repository_name_with_owner,
             remote_branch_name=remote_branch_name,
-            expected_head_oid=last_remote_commit_created_oid or latest_remote_head_oid,
+            expected_head_oid=last_commit_pushed or merge_base_commit_oid,
             file_changes=file_changes,
             message=commit_message,
         )
-
+        remote_commit_hashes_created.append(last_commit_pushed)
         logging.info(
             "Created commit %s from commit sha %s on branch %s/%s with message: %s",
-            last_remote_commit_created_oid,
+            last_commit_pushed,
             local_commit_hash,
             remote_name,
             remote_branch_name,
