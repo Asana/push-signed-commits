@@ -505,7 +505,7 @@ if __name__ == "__main__":
     parser.add_argument("local_branch_name", help="Local branch name", type=str)
     parser.add_argument("remote_name", help="Remote name")
     parser.add_argument("remote_branch_name", help="Remote branch name")
-    parser.add_argument("log-level", default="WARN", help="Log level", type=str)
+    parser.add_argument("log_level", default="WARN", help="Log level", type=str)
     args = parser.parse_args()
 
     logging.basicConfig(level=args.log_level)
