@@ -138,7 +138,7 @@ def get_file_changes_from_local_commit_hash(commit_hash: str) -> FileChanges:
     # https://git-scm.com/docs/git-diff#Documentation/git-diff.txt---name-status for more on the
     # --name-status parameter.
     result = subprocess.run(
-        ["git", "diff", "--name-status", f"{commit_hash}~1", commit_hash],
+        ["git", "diff", "--name-status", f"{commit_hash}^", commit_hash],
         stdout=subprocess.PIPE,
         text=True,
         check=True,
