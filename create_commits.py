@@ -170,7 +170,7 @@ def get_file_changes_from_local_commit_hash(commit_hash: str) -> FileChanges:
 
         ############# Handle Additions and Modifications #############
         if status in ["A", "M"]:
-            logging.debug("Added or modified file %s detected", filenames[-1])
+            logging.debug("Added or modified file %s detected", filenames[0])
 
             # Per Github's docs on modeling file changes:
             # https://docs.github.com/en/graphql/reference/input-objects#modeling-file-changes,
@@ -180,7 +180,7 @@ def get_file_changes_from_local_commit_hash(commit_hash: str) -> FileChanges:
             file_changes["additions"].append(
                 FileAddition(
                     path=filenames[-1],
-                    contents=get_file_contents_at_commit(commit_hash, filenames[-1]),
+                    contents=get_file_contents_at_commit(commit_hash, filenames[0]),
                 )
             )
 
