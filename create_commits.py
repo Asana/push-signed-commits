@@ -159,7 +159,8 @@ def get_local_commits_not_on_remote(
 ) -> list[str]:
     """
     Get a list of commit hashes on the local branch that are not on the remote branch,
-    chronologically ordered from oldest to newest.
+    chronologically ordered from oldest to newest. This uses the .. operator, and not the ...
+    operator, and so it's safe to run this function even if we've fetched updates to the remote.
 
     Args:
         local_branch_name (str): The name of the local branch.
@@ -245,6 +246,30 @@ def create_commit_on_remote_branch(
     return response.json()["data"]["createCommitOnBranch"]["commit"]["oid"]
 
 
+def fetch_remote_branch_and_get_head_oid(
+    remote_name: str, remote_branch_name: str
+) -> str:
+    """
+    This function runs a git fetch to get the latest changes to the remote branch. We don't actually
+    integrate the changes into the local branch, we just want to get the latest commit OID on the
+    remote. We then return the OID of the latest commit on the remote branch.
+    """
+    # first, fetch the branch to pull in latest changes
+    subprocess.run(
+        ["git", "fetch", remote_name, remote_branch_name],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    # Get the commit OID of the latest commit on the remote branch
+    return subprocess.run(
+        ["git", "rev-parse", f"{remote_name}/{remote_branch_name}"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+
 def main(
     *,
     github_token: str,
@@ -269,6 +294,34 @@ def main(
         remote_branch_name (str): The name of the remote branch.
     """
 
+    ################################################################################################
+    ####### Verification steps - these are checks to ensure that the script can run safely. ########
+    ################################################################################################
+
+    # Get the 'expected parent' commit sha of the new commits that we want to push. we do this using
+    # git merge-base local_branch_name remote_name/remote_branch_name
+    expected_parent_commit_oid: str = subprocess.run(
+        ["git", "merge-base", local_branch_name, f"{remote_name}/{remote_branch_name}"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+    # Verify that the remote branch has not diverged from the local branch. If it has, raise an
+    # exception.
+    latest_remote_head_oid = fetch_remote_branch_and_get_head_oid(
+        remote_name, remote_branch_name
+    )
+    if latest_remote_head_oid != expected_parent_commit_oid:
+        raise RemoteBranchDivergedError(
+            f"The remote branch {remote_name}/{remote_branch_name} has diverged from the local "
+            f"branch {local_branch_name}. Aborting."
+        )
+
+    ################################################################################################
+    ####### Get the list of commits on the local branch that are not on the remote branch. #########
+    ################################################################################################
+
     # List of hashes for commit on the local branch that are not on the remote branch
     new_commit_local_hashes: list[str] = get_local_commits_not_on_remote(
         local_branch_name, remote_name, remote_branch_name
@@ -292,21 +345,12 @@ def main(
 
         file_changes = get_file_changes_from_local_commit_hash(local_commit_hash)
 
-        # Get the commit OID of the latest commit on the remote branch
-        subprocess.run(
-            ["git", "fetch", remote_name, remote_branch_name],
-            capture_output=True,
-            text=True,
-            check=True,
+        latest_remote_head_oid = fetch_remote_branch_and_get_head_oid(
+            remote_name, remote_branch_name
         )
-        remote_head_oid = subprocess.run(
-            ["git", "rev-parse", f"{remote_name}/{remote_branch_name}"],
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout.strip()
+
         assert (
-            remote_head_oid == last_remote_commit_created_oid
+            latest_remote_head_oid == last_remote_commit_created_oid
             or not last_remote_commit_created_oid
         ), (
             "The latest commit on the remote branch is not the last commit created by this "
@@ -320,7 +364,7 @@ def main(
             github_token=github_token,
             repository_name_with_owner=repository_name_with_owner,
             remote_branch_name=remote_branch_name,
-            expected_head_oid=remote_head_oid,
+            expected_head_oid=last_remote_commit_created_oid or latest_remote_head_oid,
             file_changes=file_changes,
             message=commit_message,
         )
