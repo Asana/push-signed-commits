@@ -1,5 +1,6 @@
 # pyright: strict
 import base64
+from email.mime import base
 import subprocess
 from typing import Literal, Optional, TypedDict
 import logging
@@ -85,6 +86,29 @@ class CommitMessage(TypedDict):
     headline: str
 
 
+def get_file_contents_at_commit(commit_hash: str, filename: str) -> str:
+    """
+    Get the contents of a file at a specific commit, encoded as a base64 string.
+
+    Args:
+        commit_hash (str): The hash of the commit.
+        filename (str): The name of the file.
+
+    Returns:
+        bytes: The contents of the file, encoded in utf-8
+    """
+    # get the file contents as utf-8 bytes
+    text_contents = subprocess.run(
+        ["git", "show", f"{commit_hash}:{filename}"],
+        stdout=subprocess.PIPE,
+        text=True,
+        check=True,
+    ).stdout.encode("utf-8")
+
+    # encode the file contents as a base64 string and return the string
+    return base64.b64encode(text_contents).decode("utf-8")
+
+
 def get_file_changes_from_local_commit_hash(commit_hash: str) -> FileChanges:
     """
     Create a file changes object for a specific commit.
@@ -96,75 +120,99 @@ def get_file_changes_from_local_commit_hash(commit_hash: str) -> FileChanges:
         dict: A dictionary representing the FileChanges object.
     """
 
-    # setting config variable advice.detachedHead to false to avoid verbose messages in the logs
-    subprocess.run(
-        ["git", "config", "advice.detachedHead", "false"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=True,
+    logging.debug(
+        "Now retrieving the file changes for local commit hash %s", commit_hash
     )
 
-    logging.debug("")
-    logging.debug("now working on commit hash %s", commit_hash)
-    # Get a list of files changed in a specific commit.
+    # Create a FileChanges object for this commit
+    file_changes = FileChanges(
+        additions=[],
+        deletions=[],
+    )
+
+    ################################################################################################
+    ####### Get the list of files changed in the commit.                                ###########
+    ################################################################################################
+
+    # Get a list of files changed in a specific commit. See
+    # https://git-scm.com/docs/git-diff#Documentation/git-diff.txt---name-status for more on the
+    # --name-status parameter.
     result = subprocess.run(
         ["git", "diff", "--name-status", f"{commit_hash}~1", commit_hash],
         stdout=subprocess.PIPE,
         text=True,
         check=True,
     )
-    files_changed_by_commit = result.stdout.splitlines()
+    files_changed_by_commit: list[str] = result.stdout.splitlines()
 
-    logging.debug("files_changed_by_commit:\n %s", files_changed_by_commit)
-    file_changes = FileChanges(
-        additions=[],
-        deletions=[],
+    logging.debug(
+        "Output of git diff --name-status:\n %s",
+        "\n".join(files_changed_by_commit),
     )
 
-    # check out that commit in detached head state, so that we can pull file contents accurately
-    subprocess.run(["git", "checkout", commit_hash], check=True)
-    logging.debug("output of ls after checking out commit hash:")
-    subprocess.run(["ls"], check=True)
+    ################################################################################################
+    ####### Create FileAddition and FileDeletion objects for each file changed in the commit. ######
+    ################################################################################################
+    for file_change_line in files_changed_by_commit:
+        # the --name-status parameter in git diff returns lines in the format "status\tfilenames",
+        # where status is a single letter representing the change type, and filenames is a
+        # tab-separated list of filenames. See
+        # https://git-scm.com/docs/git-diff#Documentation/git-diff.txt---diff-filterACDMRTUXB82308203
+        # for more on what each status code means.
 
-    for line in files_changed_by_commit:
-        status, *filenames = line.split("\t")
+        # Since we're only inspecting full commits (not the
+        # contents of the working tree, the index, or the files on disk), we only need to handle the
+        # A, M, R, and D status codes.
+        status, *filenames = file_change_line.split("\t")
+
         logging.debug("status: %s", status)
         logging.debug("filenames: %s", filenames)
+
+        ############# Handle Additions and Modifications #############
         if status in ["A", "M"]:
-            logging.debug("Added or modified file detected")
-            with open(filenames[-1], "rb") as f:
-                contents = base64.b64encode(f.read()).decode("utf-8")
+            logging.debug("Added or modified file %s detected", filenames[-1])
+
+            # Per Github's docs on modeling file changes:
+            # https://docs.github.com/en/graphql/reference/input-objects#modeling-file-changes,
+            # new files and modifications to existing files are modeled identically. Each should be
+            # specified as an 'addition', with the full file contents provided.
+
             file_changes["additions"].append(
                 FileAddition(
                     path=filenames[-1],
-                    contents=contents,
+                    contents=get_file_contents_at_commit(commit_hash, filenames[-1]),
                 )
             )
-        elif "R" in status or status == "R":
-            logging.debug("Renamed file detected")
+
+        ############# Handle Renames #############
+        elif (
+            # We check for "R" in status because we've seen odd formats for rename status codes,
+            # like "R100"
+            "R" in status
+            or status == "R"
+        ):
             old_name = filenames[0]
             new_name = filenames[1]
-            logging.debug("old_name: %s", old_name)
-            logging.debug("new_name: %s", new_name)
+            logging.debug(
+                "Renamed file detected. File was renamed from %s to %s",
+                old_name,
+                new_name,
+            )
 
-            file_changes["deletions"].append({"path": old_name})
-            with open(new_name, "rb") as f:
-                contents = base64.b64encode(f.read()).decode("utf-8")
+            # Per Github's docs on modeling file changes, renames are modeled as a deletion of the
+            # old file and an addition of the new file:
+            file_changes["deletions"].append(FileDeletion(path=old_name))
             file_changes["additions"].append(
                 FileAddition(
                     path=new_name,
-                    contents=contents,
+                    contents=get_file_contents_at_commit(commit_hash, new_name),
                 )
             )
 
+        ############# Handle Deletions #############
         elif status == "D":
-            logging.debug("Deleted file detected")
+            logging.debug("Deleted file %s detected", filenames[0])
             file_changes["deletions"].append(FileDeletion(path=filenames[0]))
-
-    # go back to the previous ref
-    subprocess.run(
-        ["git", "checkout", "-"], check=True, stdout=subprocess.PIPE, text=True
-    )
 
     return file_changes
 
@@ -457,7 +505,10 @@ if __name__ == "__main__":
     parser.add_argument("local_branch_name", help="Local branch name", type=str)
     parser.add_argument("remote_name", help="Remote name")
     parser.add_argument("remote_branch_name", help="Remote branch name")
+    parser.add_argument("log-level", default="WARN", help="Log level", type=str)
     args = parser.parse_args()
+
+    logging.basicConfig(level=args.log_level)
 
     # Validate branch names
     validate_branch_name(args.local_branch_name, "local", remote_name=args.remote_name)
