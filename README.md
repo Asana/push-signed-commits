@@ -28,7 +28,7 @@ The action is intended to be used by Github Actions as a follow-up to a 'commit'
           git commit -m "Once pushed to the remote, this commit will appear as authored by the GitHub App and verified"
     
       - name: "Push commits"
-        uses: ./.github/actions/create-signed-remote-commits
+        uses: Asana/push-signed-commits@v1
         with:
             github-token: ${{ steps.generate-token.outputs.token }}
             local_branch_name: "main"
@@ -37,3 +37,14 @@ The action is intended to be used by Github Actions as a follow-up to a 'commit'
 ```
 
 As a final step, the local branch will be reset to match the remote branch using `git reset --hard`
+
+
+## Background and context
+
+Per https://github.com/orgs/community/discussions/50055, historically the only way to create 'signed' commits as a Github App installation was to use the Git database APIs (described at https://docs.github.com/en/rest/guides/using-the-rest-api-to-interact-with-your-git-database?apiVersion=2022-11-28). These APIs are complicated, and it's a challenging multi-step process to implement commit verification with them. 
+
+In 2021, Github released the createCommitOnBranch GraphQL mutation, which makes it easier to add, update, and delete files in a branch of a repository. This new API offers a simpler way to commit changes compared to the existing Git database REST APIs. With the new createCommitOnBranch mutation, you do not need to manually create blobs and trees via separate API calls before creating the commit. This allows you to add, update, or delete multiple files in a single API call.
+
+The push-signed-commits composite action uses the new createCommitOnBranch GraphQL endpoint to create verified commits on a remote branch. This GraphQL API extracts authorship information from the credential used for authentication, and automatically marks commits created using Github App installation credentials as "verified". 
+
+Read more about this new mutation and its conveniences here: https://github.blog/changelog/2021-09-13-a-simpler-api-for-authoring-commits/
