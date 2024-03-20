@@ -327,9 +327,11 @@ def main(
         local_branch_name, remote_name, remote_branch_name
     )
 
-    # Track the OID for the most recent commit created. This will be used as the parent commit OID
-    # for the next commit.
-    last_remote_commit_created_oid: Optional[str] = None
+    ################################################################################################
+    ####### Prepare the FileChanges and CommitMessage objects for each commit to be created. #######
+    ################################################################################################
+
+    new_commits_to_create: list[tuple[str, CommitMessage, FileChanges]] = []
 
     for local_commit_hash in new_commit_local_hashes:
         commit_message = subprocess.run(
@@ -344,11 +346,21 @@ def main(
         commit_message = CommitMessage(headline=headline, body=body)
 
         file_changes = get_file_changes_from_local_commit_hash(local_commit_hash)
+        new_commits_to_create.append((local_commit_hash, commit_message, file_changes))
+
+    ################################################################################################
+    ####### Create the commits on the remote branch using the Github GraphQL endpoint ##############
+    ################################################################################################
+
+    # Track the OID for the most recent commit created. This will be used as the parent commit OID
+    # for the next commit.
+    last_remote_commit_created_oid: Optional[str] = None
+
+    for local_commit_hash, commit_message, file_changes in new_commits_to_create:
 
         latest_remote_head_oid = fetch_remote_branch_and_get_head_oid(
             remote_name, remote_branch_name
         )
-
         assert (
             latest_remote_head_oid == last_remote_commit_created_oid
             or not last_remote_commit_created_oid
