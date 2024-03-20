@@ -1,0 +1,74 @@
+name: Diff a local and remote branch, and use createCommitOnBranch to push copies of local commits to the remote
+
+description: |
+  This composite Github Action was designed to allow Github Apps to push 'Verified' commits to Github. 
+  
+  Per https://github.com/orgs/community/discussions/50055, historically the only way to create 'signed' commits as a Github App installation was to use the Git database APIs (described at https://docs.github.com/en/rest/guides/using-the-rest-api-to-interact-with-your-git-database?apiVersion=2022-11-28). These APIs are complicated, and it's a challenging multi-step process to implement commit verification with them. 
+  
+  In 2021, Github released the createCommitOnBranch GraphQL mutation, which makes it easier to add, update, and delete files in a branch of a repository. This new API offers a simpler way to commit changes compared to the existing Git database REST APIs. With the new createCommitOnBranch mutation, you do not need to manually create blobs and trees via separate API calls before creating the commit. This allows you to add, update, or delete multiple files in a single API call.
+  
+  The push-signed-commits composite action uses the new createCommitOnBranch GraphQL endpoint to create verified commits on a remote branch. This GraphQL API extracts authorship information from the credential used for authentication, and automatically marks commits created using Github App installation credentials as "verified". 
+  
+  Read more about this new mutation and its conveniences here: https://github.blog/changelog/2021-09-13-a-simpler-api-for-authoring-commits/
+
+inputs:
+  github-token:
+    description: 'GitHub token'
+    required: true
+  owner:
+    description: 'Repository owner'
+    required: true
+    default: ${{ github.repository_owner }}
+  repo:
+    description: 'Repository name'
+    required: true
+    default: ${{ github.repository }}
+  local_branch_name:
+    description: 'Local branch name'
+    required: true
+  remote_branch_name:
+    description: 'Remote branch name - should not include refs/heads/ prefix or origin/ prefix'
+    required: true
+  remote_name: 
+    description: 'The name of the remote to push to, pre-configured in the local git repo. eg., `origin`'
+    default: 'origin'
+  log_level: 
+    description: 'Log level, specified using the standard Python logging module levels. Default is WARN. Options are DEBUG, INFO, WARN, ERROR.'
+    default: 'WARN'
+runs:
+  using: 'composite'
+  steps:
+    - name: Mask token
+      run: echo "::add-mask::${{ inputs.github-token }}"
+      shell: bash
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.9'
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install requests
+      shell: bash
+    - name: Run script
+      run: |
+        python ${{ github.action_path }}/create_commits.py "$GITHUB_TOKEN" "$REPO" "$LOCAL_BRANCH_NAME" "$REMOTE_NAME" "$REMOTE_BRANCH_NAME" "$LOG_LEVEL"
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        REPO: ${{ inputs.repo }}
+        LOCAL_BRANCH_NAME: ${{ inputs.local_branch_name }}
+        REMOTE_BRANCH_NAME: ${{ inputs.remote_branch_name }}
+        REMOTE_NAME: ${{ inputs.remote_name }}
+        LOG_LEVEL: ${{ inputs.log_level }}
+    # The createCommitOnBranch endpoint will dynamically generate authorship and commit verification information, which will result in different commit hashes on the remote vs. local branch. 
+    # If the creation of remote commits is successful, a final step runs. This step will reset the local branch to have the same authorship info, verification status, and therefore commit hash (which is deterministically derived from commit contents) as the remote. 
+    - name: Reset the local branch to the remote branch
+      if: success()
+      run: |
+        git fetch "$REMOTE_NAME" "$REMOTE_BRANCH_NAME"
+        git reset --hard "$REMOTE_NAME"/"$REMOTE_BRANCH_NAME"
+      shell: bash
+      env:
+        REMOTE_NAME: ${{ inputs.remote_name }}
+        REMOTE_BRANCH_NAME: ${{ inputs.remote_branch_name }}
