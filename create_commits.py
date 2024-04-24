@@ -9,6 +9,10 @@ import requests
 import argparse
 
 
+################################################################################################
+####### Define custom exceptions for this script.                                       ########
+################################################################################################
+
 # exception for when we only manage to push some of the commits to the remote, but fail partway
 # through and so don't push all the commits. this is the most serious type of error -- it could
 # require operator intervention to resolve and may lead to unexpected results downstream.
@@ -29,13 +33,16 @@ class GithubAPIError(Exception):
     An exception raised when the GitHub API returns an error.
     """
 
-
 class RemoteBranchDivergedError(Exception):
     """
     An exception raised when the remote branch has diverged from the local branch - i.e., the remote
     branch has commits that the local branch does not have.
     """
 
+
+################################################################################################
+####### Define the input objects for the createCommitOnBranch mutation.                  ########
+################################################################################################
 
 class FileDeletion(TypedDict):
     """
@@ -85,6 +92,10 @@ class CommitMessage(TypedDict):
     body: str
     headline: str
 
+
+################################################################################################
+####### Define functions for interacting with the local git repository.                ########
+################################################################################################
 
 def get_file_contents_at_commit(commit_hash: str, filename: str) -> str:
     """
@@ -299,6 +310,13 @@ def create_commit_on_remote_branch(
     data = {"query": mutation, "variables": {"input": graphql_input}}
     response = requests.post(url, headers=headers, json=data).json()
 
+    if "data" not in response:
+        raise GithubAPIError(
+            f"Unknown error creating commit on branch {repository_name_with_owner}/"
+            f"{remote_branch_name}. The response from the Github API was of an unexpected format.\n"
+            f"Response: {response}",
+        )
+
     # If there are errors in the response, log the errors and raise an exception
     if "errors" in response:
         logging.error(response)
@@ -447,14 +465,32 @@ def main(
 
         # Create a commit on the remote branch, and store the OID of the created commit in
         # last_commit_pushed
-        last_commit_pushed = create_commit_on_remote_branch(
-            github_token=github_token,
-            repository_name_with_owner=repository_name_with_owner,
-            remote_branch_name=remote_branch_name,
-            expected_head_oid=last_commit_pushed or merge_base_commit_oid,
-            file_changes=file_changes,
-            message=commit_message,
-        )
+        try:
+            pushed_commit = create_commit_on_remote_branch(
+                github_token=github_token,
+                repository_name_with_owner=repository_name_with_owner,
+                remote_branch_name=remote_branch_name,
+                expected_head_oid=last_commit_pushed or merge_base_commit_oid,
+                file_changes=file_changes,
+                message=commit_message,
+            )
+            last_commit_pushed = pushed_commit
+        except (RemoteBranchDivergedError, GithubAPIError) as e:
+            if not last_commit_pushed:
+                # If we haven't pushed any commits yet, then the error is less severe. We'll print
+                # an error, but we won't raise an exception - this means the Github Action's status
+                # will still be 'success'.
+                logging.error(
+                    "An error occurred while pushing the first commit to the remote branch. "
+                    "This action made no changes to the remote branch. Error message: %s",
+                    e,
+                )
+                return
+            else:
+                # If we've already pushed some commits, then the error is more severe. We'll raise an
+                # exception.
+                raise e
+
         remote_commit_hashes_created.append(last_commit_pushed)
         logging.info(
             "Created commit %s from commit sha %s on branch %s/%s with message: %s",
