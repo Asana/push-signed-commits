@@ -1,6 +1,5 @@
 # pyright: strict
 import base64
-from email.mime import base
 import subprocess
 from typing import Literal, Optional, TypedDict
 import logging
@@ -297,6 +296,13 @@ def create_commit_on_remote_branch(
     }
     """
 
+    logging.info(
+        "Creating commit on branch %s/%s with message: %s",
+        repository_name_with_owner,
+        remote_branch_name,
+        message["headline"],
+    )
+
     graphql_input = {
         "branch": {
             "repositoryNameWithOwner": repository_name_with_owner,
@@ -308,7 +314,7 @@ def create_commit_on_remote_branch(
     }
 
     data = {"query": mutation, "variables": {"input": graphql_input}}
-    response = requests.post(url, headers=headers, json=data).json()
+    response = requests.post(url, headers=headers, json=data, timeout=600).json()
 
     if "data" not in response:
         raise GithubAPIError(
@@ -318,9 +324,9 @@ def create_commit_on_remote_branch(
         )
 
     # If there are errors in the response, log the errors and raise an exception
-    if "errors" in response:
+    if errors := response.get("errors"):
         logging.error(response)
-        if response["errors"][0]["type"] == "STALE_DATA":
+        if any(error.get("type") == "STALE_DATA" for error in errors):
             raise PartialPushFailure(
                 "The expected head OID for the remote branch is stale. This is likely because "
                 "someone else has pushed to the remote branch since we last fetched it. Aborting."
@@ -329,10 +335,25 @@ def create_commit_on_remote_branch(
             raise GithubAPIError(
                 f"Error creating commit on branch {repository_name_with_owner}/"
                 f"{remote_branch_name}.\n"
-                f"Error message: {response['errors']}",
+                f"Error message: {errors}",
             )
 
-    return response["data"]["createCommitOnBranch"]["commit"]["oid"]
+    if not (
+        commit := response.get("data", {}).get("createCommitOnBranch", {}).get("commit")
+    ):
+        raise GithubAPIError(
+            f"Unknown error creating commit on branch {repository_name_with_owner}/"
+            f"{remote_branch_name}. The response from the Github API was of an unexpected format.\n"
+            f"Response: {response}",
+        )
+    else:
+        logging.info(
+            "Created commit with OID %s on branch %s/%s",
+            commit["oid"],
+            repository_name_with_owner,
+            remote_branch_name,
+        )
+        return commit["oid"]
 
 
 def fetch_remote_branch_and_get_head_oid(
