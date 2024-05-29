@@ -34,7 +34,7 @@ inputs:
     default: 'origin'
   log_level: 
     description: 'Log level, specified using the standard Python logging module levels. Default is WARN. Options are DEBUG, INFO, WARN, ERROR.'
-    default: 'INFO'
+    default: 'WARN'
 runs:
   using: 'composite'
   steps:

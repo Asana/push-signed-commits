@@ -453,6 +453,7 @@ def main(
         commit_message_lines = commit_message.split("\n")
         headline = commit_message_lines[0]
         body = "\n".join(commit_message_lines[1:])
+        body += f"\n\nThis commit was created from the local commit with hash {local_commit_hash}."
         commit_message = CommitMessage(headline=headline, body=body)
 
         file_changes = get_file_changes_from_local_commit_hash(local_commit_hash)
@@ -499,18 +500,13 @@ def main(
         except (RemoteBranchDivergedError, GithubAPIError) as e:
             if not last_commit_pushed:
                 # If we haven't pushed any commits yet, then the error is less severe. We'll print
-                # an error, but we won't raise an exception - this means the Github Action's status
-                # will still be 'success'.
+                # an error that explains this, and will raise an exception.
                 logging.error(
                     "An error occurred while pushing the first commit to the remote branch. "
                     "This action made no changes to the remote branch. Error message: %s",
                     e,
                 )
-                return
-            else:
-                # If we've already pushed some commits, then the error is more severe. We'll raise an
-                # exception.
-                raise e
+            raise e
 
         remote_commit_hashes_created.append(last_commit_pushed)
         logging.info(
