@@ -32,9 +32,12 @@ inputs:
   remote_name: 
     description: 'The name of the remote to push to, pre-configured in the local git repo. eg., `origin`'
     default: 'origin'
-  log_level: 
+  log_level:
     description: 'Log level, specified using the standard Python logging module levels. Default is WARN. Options are DEBUG, INFO, WARN, ERROR.'
     default: 'WARN'
+  python-version:
+    description: 'Python version to use. Defaults to 3.9 for backwards compatibility.'
+    default: '3.9'
 runs:
   using: 'composite'
   steps:
@@ -44,7 +47,7 @@ runs:
     - name: Set up Python
       uses: actions/setup-python@v2
       with:
-        python-version: '3.9'
+        python-version: ${{ inputs.python-version }}
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
