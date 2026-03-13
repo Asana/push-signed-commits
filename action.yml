@@ -36,7 +36,7 @@ inputs:
     description: 'Log level, specified using the standard Python logging module levels. Default is WARN. Options are DEBUG, INFO, WARN, ERROR.'
     default: 'WARN'
   python-version:
-    description: 'Python version to use. Defaults to 3.9 for backwards compatibility.'
+    description: 'Python version to use. Defaults to 3.9.'
     default: '3.9'
 runs:
   using: 'composite'
