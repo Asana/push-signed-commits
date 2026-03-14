@@ -38,6 +38,13 @@ class RemoteBranchDivergedError(Exception):
     branch has commits that the local branch does not have.
     """
 
+class RemoteBranchNotFoundError(Exception):
+    """
+    An exception raised when the remote branch does not exist. This can happen if the preceeding steps
+    forget to push their branch after creating it. We do not create one and raise this error because 
+    we do not know what the base branch is. 
+    """
+
 
 ################################################################################################
 ####### Define the input objects for the createCommitOnBranch mutation.                  ########
@@ -407,7 +414,16 @@ def main(
     ################################################################################################
     ####### Verification steps - ensure that the script can run safely.                     ########
     ################################################################################################
-
+    does_remote_branch_exist = subprocess.run(
+        ["git", "ls-remote", "--exit-code", "--heads", remote_name, remote_branch_name],
+        capture_output=True,
+        text=True,
+    ).returncode == 0
+    if not does_remote_branch_exist:
+        raise RemoteBranchNotFoundError(
+            f"Remote branch {remote_branch_name} does not exist on {remote_name}."
+        )
+    
     # Get the 'expected parent' commit sha of the new commits that we want to push. we do this using
     # git merge-base local_branch_name remote_name/remote_branch_name
     merge_base_commit_oid: str = subprocess.run(
