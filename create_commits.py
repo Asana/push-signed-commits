@@ -4,8 +4,13 @@ import subprocess
 from typing import Literal, Optional, TypedDict
 import logging
 
+import json
 import requests
 import argparse
+
+# GitHub's GraphQL API has a 45MB payload limit. We use 40MB as our threshold to leave room for
+# the rest of the request payload (query string, variables wrapper, commit message, etc.)
+MAX_PAYLOAD_BYTES = 40 * 1024 * 1024
 
 
 ################################################################################################
@@ -225,6 +230,57 @@ def get_file_changes_from_local_commit_hash(commit_hash: str) -> FileChanges:
             file_changes["deletions"].append(FileDeletion(path=filenames[0]))
 
     return file_changes
+
+
+def estimate_file_changes_payload_size(file_changes: FileChanges) -> int:
+    """
+    Estimate the JSON payload size in bytes for a FileChanges object.
+    This gives a rough estimate of how much space the file changes will occupy in the
+    GraphQL request payload.
+    """
+    return len(json.dumps(file_changes).encode("utf-8"))
+
+
+def chunk_file_changes(file_changes: FileChanges) -> list[FileChanges]:
+    """
+    Split a FileChanges object into multiple chunks, each estimated to be under
+    MAX_PAYLOAD_BYTES. Deletions are always included in the first chunk since they are
+    small (just paths). Additions are distributed across chunks.
+
+    If the FileChanges is already under the limit, returns a single-element list.
+    """
+    total_size = estimate_file_changes_payload_size(file_changes)
+    if total_size <= MAX_PAYLOAD_BYTES:
+        return [file_changes]
+
+    logging.warning(
+        "Commit file changes payload is ~%d MB, which exceeds the 40MB chunking threshold. "
+        "Splitting into multiple commits.",
+        total_size // (1024 * 1024),
+    )
+
+    chunks: list[FileChanges] = []
+    current_chunk = FileChanges(additions=[], deletions=file_changes["deletions"])
+    current_size = estimate_file_changes_payload_size(current_chunk)
+
+    for addition in file_changes["additions"]:
+        addition_size = len(json.dumps(addition).encode("utf-8"))
+
+        # If adding this file would exceed the limit and the chunk already has content,
+        # finalize the current chunk and start a new one.
+        if current_size + addition_size > MAX_PAYLOAD_BYTES and current_chunk["additions"]:
+            chunks.append(current_chunk)
+            current_chunk = FileChanges(additions=[], deletions=[])
+            current_size = estimate_file_changes_payload_size(current_chunk)
+
+        current_chunk["additions"].append(addition)
+        current_size += addition_size
+
+    if current_chunk["additions"] or current_chunk["deletions"]:
+        chunks.append(current_chunk)
+
+    logging.info("Split file changes into %d chunks.", len(chunks))
+    return chunks
 
 
 def get_local_commits_not_on_remote(
@@ -485,30 +541,44 @@ def main(
                 f"push were {new_commit_local_hashes[len(remote_commit_hashes_created):]}."
             )
 
-        # Create a commit on the remote branch, and store the OID of the created commit in
-        # last_commit_pushed
-        try:
-            pushed_commit = create_commit_on_remote_branch(
-                github_token=github_token,
-                repository_name_with_owner=repository_name_with_owner,
-                remote_branch_name=remote_branch_name,
-                expected_head_oid=last_commit_pushed or merge_base_commit_oid,
-                file_changes=file_changes,
-                message=commit_message,
-            )
-            last_commit_pushed = pushed_commit
-        except (RemoteBranchDivergedError, GithubAPIError) as e:
-            if not last_commit_pushed:
-                # If we haven't pushed any commits yet, then the error is less severe. We'll print
-                # an error that explains this, and will raise an exception.
-                logging.error(
-                    "An error occurred while pushing the first commit to the remote branch. "
-                    "This action made no changes to the remote branch. Error message: %s",
-                    e,
-                )
-            raise e
+        # Split large commits into chunks to stay under GitHub's 45MB payload limit
+        file_changes_chunks = chunk_file_changes(file_changes)
 
-        remote_commit_hashes_created.append(last_commit_pushed)
+        for chunk_index, file_changes_chunk in enumerate(file_changes_chunks):
+            # For multi-chunk commits, annotate the commit message with the chunk number
+            if len(file_changes_chunks) > 1:
+                chunk_msg = CommitMessage(
+                    headline=f"{commit_message['headline']} (part {chunk_index + 1}/{len(file_changes_chunks)})",
+                    body=commit_message["body"],
+                )
+            else:
+                chunk_msg = commit_message
+
+            # Create a commit on the remote branch, and store the OID of the created commit in
+            # last_commit_pushed
+            try:
+                pushed_commit = create_commit_on_remote_branch(
+                    github_token=github_token,
+                    repository_name_with_owner=repository_name_with_owner,
+                    remote_branch_name=remote_branch_name,
+                    expected_head_oid=last_commit_pushed or merge_base_commit_oid,
+                    file_changes=file_changes_chunk,
+                    message=chunk_msg,
+                )
+                last_commit_pushed = pushed_commit
+            except (RemoteBranchDivergedError, GithubAPIError) as e:
+                if not last_commit_pushed:
+                    # If we haven't pushed any commits yet, then the error is less severe. We'll
+                    # print an error that explains this, and will raise an exception.
+                    logging.error(
+                        "An error occurred while pushing the first commit to the remote branch. "
+                        "This action made no changes to the remote branch. Error message: %s",
+                        e,
+                    )
+                raise e
+
+            remote_commit_hashes_created.append(last_commit_pushed)
+
         logging.info(
             "Created commit %s from commit sha %s on branch %s/%s with message: %s",
             last_commit_pushed,
