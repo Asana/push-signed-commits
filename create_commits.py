@@ -107,16 +107,16 @@ def get_file_contents_at_commit(commit_hash: str, filename: str) -> str:
     Returns:
         bytes: The contents of the file, encoded in utf-8
     """
-    # get the file contents as utf-8 bytes
-    text_contents = subprocess.run(
+    # get the file contents as raw bytes (not text mode, to support binary files)
+    raw_contents = subprocess.run(
         ["git", "show", f"{commit_hash}:{filename}"],
         stdout=subprocess.PIPE,
-        text=True,
+        text=False,
         check=True,
-    ).stdout.encode("utf-8")
+    ).stdout
 
     # encode the file contents as a base64 string and return the string
-    return base64.b64encode(text_contents).decode("utf-8")
+    return base64.b64encode(raw_contents).decode("utf-8")
 
 
 def get_file_changes_from_local_commit_hash(commit_hash: str) -> FileChanges:
